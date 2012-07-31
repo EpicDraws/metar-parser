@@ -312,7 +312,6 @@ module Metar
         @temperature = Metar::Temperature.parse($1)
         @dew_point = Metar::Temperature.parse($2)
         else
-          logger.warn "Skipping temp/dew_point in #{@metar}"
           @chunks.shift
       end
       temperature_dew_point!
