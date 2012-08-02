@@ -64,6 +64,12 @@ describe Metar::Parser do
 
         parser.observer.          should     == :corrected
       end
+
+      it 'corrected (Canadian)' do
+        parser = setup_parser('CYZU 310100Z CCA 26004KT 15SM FEW009 BKN040TCU BKN100 OVC210 15/12 A2996 RETS RMK SF1TCU4AC2CI1 SLP149')
+
+        parser.observer.          should     == :corrected
+      end
       
     end
 
@@ -218,12 +224,6 @@ describe Metar::Parser do
                                   should     == 30.48
     end
 
-    it 'temperature_obligatory' do
-      expect do
-        setup_parser("PAIL 061610Z 24006KT 1 3/4SM -SN BKN016 OVC030 A2910 RMK AO2 P0000")
-      end.                        to         raise_error( Metar::ParseError )
-    end
-
     it 'temperature' do
       parser = setup_parser("PAIL 061610Z 24006KT 1 3/4SM -SN BKN016 OVC030 M17/M20 A2910 RMK AO2 P0000")
       parser.temperature.value.   should     == -17
@@ -238,6 +238,14 @@ describe Metar::Parser do
       parser = setup_parser("PAIL 061610Z 24006KT 1 3/4SM -SN BKN016 OVC030 M17/M20 A2910 RMK AO2 P0000")
       parser.sea_level_pressure.to_inches_of_mercury.
                                   should     == 29.10
+    end
+
+    it 'recent weather' do
+      parser = setup_parser("CYQH 310110Z 00000KT 20SM SCT035CB BKN050 RETS RMK CB4SC1")
+
+      parser.recent_weather.      should_not be_nil
+      parser.recent_weather.phenomenon.
+                                  should    == 'thunderstorm'
     end
 
     it 'remarks' do
