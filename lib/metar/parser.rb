@@ -1,8 +1,102 @@
+require 'aasm'
 require File.join(File.dirname(__FILE__), 'data')
 
 module Metar
 
   class Parser
+    include AASM
+
+    aasm_initial_state :start
+
+    aasm_state :start,                                       :after_enter => :seek_location
+    aasm_state :location,                                    :after_enter => :seek_datetime
+    aasm_state :datetime,                                    :after_enter => [:seek_cor_auto, :seek_wind]
+    aasm_state :wind,                                        :after_enter => :seek_variable_wind
+    aasm_state :variable_wind,                               :after_enter => :seek_visibility
+    aasm_state :visibility,                                  :after_enter => :seek_minimum_visibility
+    aasm_state :minimum_visibility,                          :after_enter => :seek_runway_visible_range
+    aasm_state :runway_visible_range,                        :after_enter => :seek_present_weather
+    aasm_state :present_weather,                             :after_enter => :seek_sky_conditions
+    aasm_state :sky_conditions,                              :after_enter => :seek_vertical_visibility
+    aasm_state :vertical_visibility,                         :after_enter => :seek_temperature_dew_point
+    aasm_state :temperature_dew_point,                       :after_enter => :seek_sea_level_pressure
+    aasm_state :sea_level_pressure,                          :after_enter => :seek_recent_weather
+    aasm_state :recent_weather,                              :after_enter => :seek_remarks
+    aasm_state :remarks,                                     :after_enter => :seek_end
+    aasm_state :end
+
+    aasm_event :location do
+      transitions :from => :start,              :to => :location
+    end
+
+    aasm_event :datetime do
+      transitions :from => :location,           :to => :datetime
+    end
+
+    aasm_event :wind do
+      transitions :from => :datetime,           :to => :wind
+    end
+
+    aasm_event :cavok do
+      transitions :from => :variable_wind,      :to => :sky_conditions
+    end
+
+    aasm_event :variable_wind do
+      transitions :from => :wind,               :to => :variable_wind
+    end
+
+    aasm_event :visibility do
+      transitions :from => [:wind, :variable_wind],
+                                                :to => :visibility
+    end
+
+    aasm_event :minimum_visibility do
+      transitions :from => :visibility,         :to => :minimum_visibility
+    end
+
+    aasm_event :runway_visible_range do
+      transitions :from => [:visibility, :minimum_visibility],
+                                                :to => :runway_visible_range
+    end
+
+    aasm_event :present_weather do
+      transitions :from => [:runway_visible_range],
+                                              :to => :present_weather
+    end
+
+    aasm_event :sky_conditions do
+      transitions :from => [:present_weather, :visibility, :sky_conditions],
+                                                :to => :sky_conditions
+    end
+
+    aasm_event :vertical_visibility do
+      transitions :from => [:present_weather, :visibility, :sky_conditions],
+                                                :to => :vertical_visibility
+    end
+
+    aasm_event :temperature_dew_point do
+      transitions :from => [:wind, :sky_conditions, :vertical_visibility],
+                                                :to => :temperature_dew_point
+    end
+
+    aasm_event :sea_level_pressure do
+      transitions :from => :temperature_dew_point,
+                                                :to => :sea_level_pressure
+    end
+
+    aasm_event :recent_weather do
+      transitions :from => [:temperature_dew_point, :sea_level_pressure],
+                                                :to => :recent_weather
+    end
+
+    aasm_event :remarks do
+      transitions :from => [:temperature_dew_point, :sea_level_pressure, :recent_weather],
+                                                :to => :remarks
+    end
+
+    aasm_event :done do
+      transitions :from => [:remarks],          :to => :end
+    end
 
     def self.for_cccc(cccc)
       raw = Metar::Raw::Noaa.new(cccc)
@@ -46,24 +140,7 @@ module Metar
       @recent_weather       = []
       @remarks              = []
 
-      seek_location
-      seek_datetime
-      seek_cor_auto
-      seek_wind
-      seek_variable_wind
-      cavok = seek_cavok
-      if not cavok
-        seek_visibility
-        seek_minimum_visibility
-        seek_runway_visible_range
-        seek_present_weather
-        seek_sky_conditions
-      end
-      seek_vertical_visibility
-      seek_temperature_dew_point
-      seek_sea_level_pressure
-      seek_recent_weather
-      seek_remarks
+      aasm_enter_initial_state
     end
 
     def seek_location
@@ -72,6 +149,7 @@ module Metar
       else
         raise ParseError.new("Expecting location, found '#{ @chunks[0] }' in #{@metar}")
       end
+      location!
     end
 
     def seek_datetime
@@ -82,6 +160,7 @@ module Metar
       else
         raise ParseError.new("Expecting datetime, found '#{ @chunks[0] }' in #{@metar}")
       end
+      datetime!
     end
 
     def seek_cor_auto
@@ -108,6 +187,7 @@ module Metar
         @chunks.shift
         @wind = wind
       end
+      wind!
     end
 
     def seek_variable_wind
@@ -116,25 +196,24 @@ module Metar
         @chunks.shift
         @variable_wind = variable_wind
       end
+      variable_wind!
     end
 
-    def seek_cavok
+    # 15.6.1
+    def seek_visibility
       if @chunks[0] == 'CAVOK'
         @chunks.shift
-        @visibility      = Visibility.new(M9t::Distance.kilometers(10), nil, :more_than)
+        @visibility = Visibility.new(M9t::Distance.kilometers(10), nil, :more_than)
         @present_weather << Metar::WeatherPhenomenon.new('No significant weather')
-        @sky_conditions  << SkyCondition.new # = 'clear skies'
-        return true
-      else
-        return false
+        @sky_conditions << SkyCondition.new # = 'clear skies'
+        cavok!
+        return
       end
-    end
 
-    # 15.10, 15.6.1
-    def seek_visibility
       if @observer == :auto # WMO 15.4
         if @chunks[0] == '////'
           @chunks.shift # Simply dispose of it
+          visibility!
           return
         end
       end
@@ -153,6 +232,7 @@ module Metar
           @visibility = visibility
         end
       end
+      visibility!
     end
 
     # Optional after visibility: 15.6.2
@@ -162,14 +242,29 @@ module Metar
         @chunks.shift
         @minimum_visibility = minimum_visibility
       end
+      minimum_visibility!
+    end
+
+    def collect_runway_visible_range
+      runway_visible_range = RunwayVisibleRange.parse(@chunks[0])
+      if runway_visible_range
+        @chunks.shift
+        @runway_visible_range << runway_visible_range
+        collect_runway_visible_range
+      end
     end
 
     def seek_runway_visible_range
-      loop do
-        runway_visible_range = RunwayVisibleRange.parse(@chunks[0])
-        break if runway_visible_range.nil?
+      collect_runway_visible_range
+      runway_visible_range!
+    end
+
+    def collect_present_weather
+      wtp = WeatherPhenomenon.parse(@chunks[0])
+      if wtp
         @chunks.shift
-        @runway_visible_range << runway_visible_range
+        @present_weather << wtp
+        collect_present_weather
       end
     end
 
@@ -178,15 +273,21 @@ module Metar
         if @chunks[0] == '//' # WMO 15.4
           @chunks.shift # Simply dispose of it
           @present_weather << Metar::WeatherPhenomenon.new('not observed')
+          present_weather!
           return
         end
       end
 
-      loop do
-        wtp = WeatherPhenomenon.parse(@chunks[0])
-        break if wtp.nil?
+      collect_present_weather
+      present_weather!
+    end
+
+    def collect_sky_conditions
+      sky_condition = SkyCondition.parse(@chunks[0])
+      if sky_condition
         @chunks.shift
-        @present_weather << wtp
+        @sky_conditions << sky_condition
+        collect_sky_conditions
       end
     end
 
@@ -195,16 +296,13 @@ module Metar
       if @observer == :auto # WMO 15.4
         if @chunks[0] == '///' or @chunks[0] == '//////'
           @chunks.shift # Simply dispose of it
+          sky_conditions!
           return
         end
       end
 
-      loop do
-        sky_condition = SkyCondition.parse(@chunks[0])
-        break if sky_condition.nil?
-        @chunks.shift
-        @sky_conditions << sky_condition
-      end
+      collect_sky_conditions
+      sky_conditions!
     end
 
     def seek_vertical_visibility
@@ -213,6 +311,7 @@ module Metar
         @chunks.shift
         @vertical_visibility = vertical_visibility
       end
+      vertical_visibility!
     end
 
     def seek_temperature_dew_point
@@ -222,6 +321,7 @@ module Metar
         @temperature = Metar::Temperature.parse($1)
         @dew_point = Metar::Temperature.parse($2)
       end
+      temperature_dew_point!
     end
 
     def seek_sea_level_pressure
@@ -230,13 +330,14 @@ module Metar
         @chunks.shift
         @sea_level_pressure = sea_level_pressure
       end
+      sea_level_pressure!
     end
  
-    def seek_recent_weather
+    def collect_recent_weather
       loop do
         return if @chunks.size == 0
         m = /^RE/.match(@chunks[0])
-        break if m.nil?
+        return if m.nil?
         recent_weather = Metar::WeatherPhenomenon.parse(m.post_match)
         if recent_weather
           @chunks.shift
@@ -245,12 +346,22 @@ module Metar
       end
     end
 
+    def seek_recent_weather
+      collect_recent_weather
+      recent_weather!
+    end
+
     def seek_remarks
       if @chunks[0] == 'RMK'
         @chunks.shift
       end
       @remarks += @chunks.clone
       @chunks = []
+      remarks!
+    end
+
+    def seek_end
+      done!
     end
 
   end
