@@ -1,7 +1,7 @@
 # -*- encoding: utf-8 -*-
 $:.unshift( File.join( File.dirname( __FILE__ ), 'lib' ) )
-require 'metar/version'
-require 'rake/file_list'
+require './metar/version'
+require './rake/file_list'
 
 Gem::Specification.new do |s|
   s.name          = 'metar-parser'
