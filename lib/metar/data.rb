@@ -115,7 +115,7 @@ module Metar
              Speed.parse($1))
       when s =~ /^VRB(\d{2})G(\d{2,3}(|MPS|KMH|KT))$/
         new( :variable_direction,
-             Speed.parse($1),
+             Speed.parse($1+$3),
              Speed.parse($2))
       when s =~ /^\/{3}(\d{2}(|MPS|KMH|KT))$/
         new( :unknown_direction,
