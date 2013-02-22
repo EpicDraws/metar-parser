@@ -6,4 +6,5 @@ pkg
 .rbenv-version
 .rvmrc
 vendor
-
+.idea
+.idea/*
